@@ -11,7 +11,8 @@
       "Bash(grep *)",
       "Bash(rg *)",
       "Bash(wc *)",
-      "Bash(file *)"
+      "Bash(file *)",
+      "Bash(luacheck *)"
     ]
   }
 }

@@ -143,5 +143,8 @@ and anything you deliberately left alone (unmatched PDFs, stray `.log` files).
 
 ## Out of scope
 
-Do not modify `convert.sh` or `convert.fish`. Renaming is a separate step the
-user runs when they choose; it must not be wired into conversion.
+Do not modify `convert.sh` or `convert.fish`. Those scripts name each PDF after
+the EPUB that produced it and stop there; the renaming happens afterwards —
+either because the user asked for it, or because the `/convert` command invoked
+this skill once the script finished. Either way this skill stays runnable on
+its own, against whatever is already sitting in `output/`.

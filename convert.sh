@@ -19,6 +19,8 @@ outdir="$here/output"
 margin=""
 fontsize=""
 keeplog=""
+# -V/-M pairs, passed straight through to pandoc.
+passthrough=()
 
 usage() {
     cat <<'EOF'
@@ -27,19 +29,32 @@ Usage: convert.sh [options] FILE.epub [FILE.epub ...]
   -o DIR    output directory (default: ./output)
   -m DIM    page margin, e.g. 8mm      (default: template's 10mm)
   -s SIZE   base font size, e.g. 18pt  (default: template's 16pt)
+  -V K=V    set a template variable    (repeatable)
+  -M K=V    set a document setting     (repeatable)
   -k        keep the build log even when the conversion succeeds
   -h        this help
+
+-V reaches template.latex, -M reaches filters/cleanup.lua. Settings worth
+knowing about:
+
+  -M frontmatter-trim=false   keep the publisher's copyright and catalogue
+                              pages instead of dropping them
+  -M small-image-max=N        pixel size below which an image counts as a
+                              decoration and is drawn at its real size (200)
+  -V dropcap-lines=N          how many lines a drop cap spans (2)
 
 Writes DIR/<name>.pdf. The build log is a conversion artefact and is deleted
 once a book converts cleanly; it is always kept when one fails.
 EOF
 }
 
-while getopts ':o:m:s:kh' opt; do
+while getopts ':o:m:s:V:M:kh' opt; do
     case "$opt" in
         o) outdir="$OPTARG" ;;
         m) margin="$OPTARG" ;;
         s) fontsize="$OPTARG" ;;
+        V) passthrough+=(-V "$OPTARG") ;;
+        M) passthrough+=(-M "$OPTARG") ;;
         k) keeplog=1 ;;
         h) usage; exit 0 ;;
         :) echo "convert.sh: -$OPTARG needs an argument" >&2; exit 2 ;;
@@ -74,6 +89,9 @@ common_args=(
 )
 [ -n "$margin" ] && common_args+=(-V "margin=$margin")
 [ -n "$fontsize" ] && common_args+=(-V "fontsize=$fontsize")
+# Last, so an explicit -V/-M overrides what -m/-s just set.
+# ${a[@]+…} because expanding an empty array trips `set -u` on older bash.
+common_args+=(${passthrough[@]+"${passthrough[@]}"})
 
 failed=0
 

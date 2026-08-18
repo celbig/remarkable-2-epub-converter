@@ -18,6 +18,8 @@ set -l margin ""
 set -l fontsize ""
 set -l keeplog ""
 set -l sources
+# -V/-M pairs, passed straight through to pandoc.
+set -l passthrough
 
 function __convert_usage
     echo "Usage: convert.fish [options] FILE.epub [FILE.epub ...]"
@@ -25,8 +27,20 @@ function __convert_usage
     echo "  -o DIR    output directory (default: ./output)"
     echo "  -m DIM    page margin, e.g. 8mm      (default: template's 10mm)"
     echo "  -s SIZE   base font size, e.g. 18pt  (default: template's 16pt)"
+    echo "  -V K=V    set a template variable    (repeatable)"
+    echo "  -M K=V    set a document setting     (repeatable)"
     echo "  -k        keep the build log even when the conversion succeeds"
     echo "  -h        this help"
+    echo
+    echo "-V reaches template.latex, -M reaches filters/cleanup.lua. Settings"
+    echo "worth knowing about:"
+    echo
+    echo "  -M frontmatter-trim=false   keep the publisher's copyright and"
+    echo "                              catalogue pages instead of dropping them"
+    echo "  -M small-image-max=N        pixel size below which an image counts"
+    echo "                              as a decoration and is drawn at its"
+    echo "                              real size (200)"
+    echo "  -V dropcap-lines=N          how many lines a drop cap spans (2)"
     echo
     echo "Writes DIR/<name>.pdf. The build log is a conversion artefact and is"
     echo "deleted once a book converts cleanly; it is always kept when one fails."
@@ -47,6 +61,12 @@ while test $i -le (count $argv)
         case -s
             set i (math $i + 1)
             set fontsize $argv[$i]
+        case -V
+            set i (math $i + 1)
+            set -a passthrough -V $argv[$i]
+        case -M
+            set i (math $i + 1)
+            set -a passthrough -M $argv[$i]
         case -k
             set keeplog 1
         case -h --help
@@ -87,6 +107,8 @@ set -l common_args \
     -V documentclass=scrbook
 test -n "$margin"; and set -a common_args -V "margin=$margin"
 test -n "$fontsize"; and set -a common_args -V "fontsize=$fontsize"
+# Last, so an explicit -V/-M overrides what -m/-s just set.
+set -a common_args $passthrough
 
 set -l failed 0
 

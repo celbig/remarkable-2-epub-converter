@@ -197,6 +197,29 @@ $endfor$
 \setlength{\DefaultNindent}{0em}
 \providecommand{\dropcap}[2]{\lettrine{#1}{#2}}
 
+% A drop cap is only ever indented *around*: \lettrine asks the paragraph to
+% give up DefaultLines lines of its left margin.  A paragraph shorter than that
+% has no such lines to give, so nothing moves out of the way and the letter
+% descends straight into the paragraph below it — "MARASI s'arrêta sur l'image
+% du monstre." followed by an M sitting on top of "C'était le soir".  Short
+% opening paragraphs are common in these novels (a line of dialogue, a single
+% sentence), so this is not a rare case.
+%
+% \prevgraf holds the number of lines of the paragraph that has just ended, so
+% the shortfall can simply be made up in vertical space.  filters/cleanup.lua
+% appends \dropcapfix to every paragraph it opens with a \dropcap.
+%
+% \vspace, not \vspace*: if the page breaks right here the drop cap is at the
+% foot of the page with nothing under it to collide with, and a starred skip
+% would only push a blank line onto the next page.
+\newcount\ebmissinglines
+\newcommand{\dropcapfix}{\par
+  \ebmissinglines=\value{DefaultLines}%
+  \advance\ebmissinglines by -\prevgraf
+  \ifnum\ebmissinglines>0
+    \vspace{\ebmissinglines\baselineskip}%
+  \fi}
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Images
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -225,6 +248,16 @@ $endfor$
 % page as 300 dpi, so LaTeX drew it at 102x157 mm and simply left it small.
 % keepaspectratio means the binding dimension wins, so wide banners scale to
 % the width and tall page images to the height.
+%
+% This is the rule for artwork — covers, maps, plates, chapter banners — and
+% for those it is right.  It is wrong for the decorations: a 66x80 px table
+% glyph or a 164x170 px publisher mark blown up to the text block lands at
+% 10-15 ppi and takes a page to itself (sixteen such pages in one book).
+% filters/cleanup.lua measures every image and gives anything at or below
+% small-image-max an explicit width instead, so the two cases no longer share
+% a rule.  An explicit width= in \includegraphics' optional argument overrides
+% the default set here; keepaspectratio survives and still binds on whichever
+% dimension is reached first.
 \setkeys{Gin}{width=\linewidth,height=\textheight,keepaspectratio}
 
 % Break the page only if something is already on it.  filters/cleanup.lua puts
@@ -255,11 +288,40 @@ $endfor$
 % and jammed against the top margin they read as mistakes rather than as front
 % matter.  filters/cleanup.lua wraps every pre-chapter block in this pair.
 %
+% Centred horizontally as well as vertically: a title page or a dedication set
+% flush left in the middle of an otherwise empty page reads as a layout
+% accident, which is exactly how these pages came out before.
+%
 % Not named \beginfrontpage/\endfrontpage: LaTeX reserves \end<name> for an
 % environment's closing code, so \newcommand{\endfrontpage} is rejected
 % outright ("Or name \end... illegal").
-\newcommand{\frontpagetop}{\clearifdirty\null\vfill}
-\newcommand{\frontpagebottom}{\vfill\clearpage}
+%
+% parskip and parindent are set locally rather than left to the class: the
+% book is `parskip=never` because novel prose wants indents and no gaps, but a
+% title page is a handful of one-line paragraphs and setting them solid turns
+% author, title, series and translator into one block of text.  The spacers
+% the publisher used for this are gone (they were what pushed the page past
+% its own bottom), so the space has to come from here.
+\newcommand{\frontpagetop}{\clearifdirty\null\vfill\begingroup
+  \centering
+  \setlength{\parindent}{0pt}%
+  \setlength{\parskip}{$if(frontpage-parskip)$$frontpage-parskip$$else$0.6\baselineskip$endif$}}
+\newcommand{\frontpagebottom}{\par\endgroup\vfill\clearpage}
+
+% The same, for a front-matter unit too long to be centred on one page — a
+% dramatis personae, a long list of dedicatees.  \vfill around content that
+% overflows does not centre anything; it just leaves the first page short and
+% spills the rest, which is what a six-page cast list looked like.  So these
+% get a page of their own and then flow normally from the top of it.
+% filters/cleanup.lua decides which of the two pairs a unit gets.
+%
+% Not centred, but not novel prose either: these units are lists, one entry per
+% paragraph.  Indents on a list read as an accident, and without a gap between
+% entries the headings inside it disappear into the run of names.
+\newcommand{\frontblocktop}{\clearifdirty\begingroup
+  \setlength{\parindent}{0pt}%
+  \setlength{\parskip}{$if(frontblock-parskip)$$frontblock-parskip$$else$0.4\baselineskip$endif$}}
+\newcommand{\frontblockbottom}{\par\endgroup\clearpage}
 \makeatletter
 \def\fps@figure{htbp}
 \makeatother

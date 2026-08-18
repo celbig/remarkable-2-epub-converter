@@ -142,6 +142,55 @@ Requirements for this device, deliberately different from print defaults:
   `\KOMAoptions{headings=...}`/`scrlayer-scrpage`, before defaulting to the
   classic LaTeX command) to keep the narrow-margin page free of chrome; the
   tablet's own PDF viewer supplies page position/progress.
+- **Front matter: trim the publisher's, keep the author's.** Everything
+  before the first chapter is grouped by EPUB spine file and each group is
+  laid out as one unit. Copyright/ISBN/legal pages, "Du même auteur"
+  catalogues and the marks left by whoever digitised the file are dropped;
+  cover, title page, dedication, maps and dramatis personae are kept. The
+  test is a class (`.cop`, `.pagecopyright`, `.titrevo`, `.ours`) or a
+  marker in the text (`ISBN`, `©`, `Titre original`, `www.`, …), applied
+  only in the pre-chapter region. Short marker patterns need word
+  boundaries: a bare `ean` matched "Jean Marchand" and threw away a
+  twelve-page cast list. Trimming is lossy, so every drop prints a
+  `[WARNING]`, which is the prefix `convert.sh` already counts. `-M
+  frontmatter-trim=false` turns it off.
+- **Front-matter pages: centred if they fit, flowing if they don't.** These
+  EPUBs pad their front matter with rows of `<p>&nbsp;</p>` — 33 around five
+  useful lines on one title page — and those spacers are what pushed a
+  centred page past its own bottom onto two or three pages. They are
+  removed at every depth (Hobb keeps its thirty inside a single `Div`, so a
+  top-level pass does nothing). A unit estimated at more than
+  `front-page-max-lines` is too tall to centre and gets a page of its own to
+  flow down instead. The estimate is deliberately not a TeX measurement: a
+  `\vbox` cannot be typeset twice, so the layout has to be chosen before the
+  content is set.
+- **Image size: two rules, split at 200 px.** Artwork — covers, maps,
+  plates, chapter banners — is fitted to the text block, scaling up as well
+  as down, because the JFIF density in these files is not trustworthy.
+  Decorations are not: a 66 px table glyph or a 164 px scanner mark blown up
+  the same way lands at 10–15 ppi and takes a page to itself (sixteen such
+  pages in one book). The corpus splits cleanly, with nothing between 189 px
+  and 300 px, so anything at or below `small-image-max` is measured and
+  drawn at its real size at 226 dpi — or, if it sits in a line of text, at
+  the height of that line. `pandoc.image` would do the measuring but only
+  exists from pandoc 3.1.13; `pandoc.mediabag.lookup` plus a JPEG/PNG/GIF
+  header read covers it here. Size an image by setting its **attributes**,
+  never by emitting a raw `\includegraphics`: filters run before pandoc
+  rewrites paths for `--extract-media`, so a hand-written path points inside
+  the zip and the build fails.
+- **Every table column gets a width.** Pandoc's LaTeX writer has two modes and
+  both fail on a 137 mm measure: with no width anywhere it emits `l` columns,
+  which do not wrap and run off the page; with widths on some columns only —
+  what an EPUB that styles three of its four `<col>` elements produces — the
+  unstyled one becomes `p{… * \real{0.0000}}` and its contents pile onto the
+  next column. The filter fills in the missing widths and rescales, keeping
+  whatever ratios the publisher did set.
+- **Drop caps reserve their own space.** `\lettrine` asks the paragraph to
+  give up lines of its left margin; a paragraph shorter than the drop cap is
+  tall has none to give, and the letter lands on top of the next paragraph.
+  `\dropcapfix`, appended by the filter to every paragraph that opens with a
+  `\dropcap`, reads `\prevgraf` after the paragraph ends and makes up the
+  difference. Unstarred `\vspace`, so a page break right there discards it.
 
 ## Pandoc concepts recap (for this project)
 

@@ -13,7 +13,9 @@ What comes out: a 157 × 209 mm page with 10 mm margins, set in 16 pt EB
 Garamond, with proper French typography (guillemets, thin spaces before `; : ! ?`,
 French hyphenation), drop caps where the publisher used them, no running heads
 or page numbers cluttering a small screen, and a PDF outline so chapter
-navigation works on the device.
+navigation works on the device. The book opens on its cover and its own title
+page rather than on the publisher's ISBN block, and ornaments are drawn at the
+size of an ornament instead of a page.
 
 ```bash
 ./convert.sh "ebooks/My Book.epub"
@@ -56,12 +58,29 @@ Options:
 | `-o DIR` | where to write the PDFs | `./output` |
 | `-m DIM` | page margin | `10mm` |
 | `-s SIZE` | base font size | `16pt` |
+| `-V K=V` | set a template variable, repeatable | |
+| `-M K=V` | set a document setting, repeatable | |
 | `-k` | keep the build log even when the book converts cleanly | off |
 | `-h` | show this help | |
 
 Each book becomes `output/<name of the epub>.pdf`. If a conversion fails, the
 build log is kept next to where the PDF would have gone and the last lines are
 printed; on success the log is deleted unless you passed `-k`.
+
+`-V` reaches the template, `-M` reaches the filter. The ones you are most
+likely to want:
+
+| Setting | Meaning | Default |
+| --- | --- | --- |
+| `-M frontmatter-trim=false` | keep the publisher's copyright, ISBN and catalogue pages | trimmed |
+| `-M small-image-max=N` | pixel size at or below which an image is a decoration, drawn at its real size rather than fitted to the page | `200` |
+| `-M front-page-max-lines=N` | how tall a front-matter page may be and still be centred | `18` |
+| `-V dropcap-lines=N` | how many lines a drop cap spans | `2` |
+
+Trimming the front matter throws content away, so it says what it dropped:
+every removed page prints a `[WARNING] cleanup.lua: front matter dropped: …`
+line, which is included in the warning count each book reports. Run with `-k`
+and read the log if a book comes out missing something you wanted.
 
 Two practical notes. **Quote every path** — real book filenames are full of
 spaces, brackets and apostrophes. And a 600-page novel takes a minute or two,
@@ -113,6 +132,13 @@ It runs `convert.sh` with those arguments and reports, per book, the page count
 and how many warnings pandoc raised. When a conversion fails it reads the build
 log and tells you what actually broke instead of handing you the whole file.
 It takes the same flags as the script, so anything in the table above works.
+
+Once the run finishes it hands the fresh PDFs to the `rename-book-pdfs` skill
+below, so they land in `output/` already named `[Series N] Title.pdf` instead of
+whatever the source EPUB was called. Only the books from that run are touched,
+and the mapping is still shown to you before anything moves. `convert.sh`
+itself is unchanged — run the script directly and you get the source filenames,
+as always.
 
 ### The `rename-book-pdfs` skill
 
