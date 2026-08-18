@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pandoc *)",
+      "Bash(lualatex *)",
+      "Bash(luacheck *)",
+      "Bash(lua *)",
+      "Bash(python3 .claude/skills/rename-book-pdfs/scripts/*)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(rg *)",
+      "Bash(wc *)",
+      "Bash(file *)"
+    ]
+  }
+}

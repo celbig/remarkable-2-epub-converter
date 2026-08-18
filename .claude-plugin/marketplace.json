@@ -1,0 +1,17 @@
+{
+  "name": "remarkable-2-epub-converter",
+  "owner": {
+    "name": "Célestin Bigarré",
+    "email": "celestin.bigarre@protonmail.com"
+  },
+  "metadata": {
+    "description": "The EPUB → PDF pipeline for the reMarkable 2, packaged as a Claude Code plugin."
+  },
+  "plugins": [
+    {
+      "name": "remarkable-2-epub-converter",
+      "source": "./",
+      "description": "EPUB → PDF conversion pipeline for the reMarkable 2, with the rename-book-pdfs skill and a /convert command."
+    }
+  ]
+}

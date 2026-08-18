@@ -1,0 +1,23 @@
+{
+  "name": "remarkable-2-epub-converter",
+  "displayName": "EPUB → PDF for the reMarkable 2",
+  "version": "0.1.0",
+  "description": "Converts French EPUB novels to PDFs laid out for the reMarkable 2's 10.3\" e-ink screen: pandoc + Lua filters + a KOMA-Script LaTeX template, plus a skill that names the output files.",
+  "license": "MIT",
+  "keywords": [
+    "pandoc",
+    "latex",
+    "epub",
+    "pdf",
+    "e-ink",
+    "remarkable",
+    "remarkable-2",
+    "lua-filter"
+  ],
+  "skills": [
+    "./.claude/skills/"
+  ],
+  "commands": [
+    "./.claude/commands/"
+  ]
+}

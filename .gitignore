@@ -1,0 +1,29 @@
+# Book files and everything derived from them. The library is personal and
+# under copyright; only the pipeline belongs in this repository.
+ebooks/
+output/
+*.epub
+*.pdf
+
+# Conversion and debug artefacts, all regenerable (see README).
+*.log
+test.md
+test.tex
+test/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+*.swp
+
+# Local, machine-specific Claude Code settings (settings.json is tracked).
+.claude/settings.local.json
+
+# The rename skill's memory of settled naming decisions. It describes one
+# personal library, so it stays on the machine that owns that library; the
+# skill recreates it from its template on first use.
+.claude/skills/rename-book-pdfs/corrections.md

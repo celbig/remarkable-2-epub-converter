@@ -1,0 +1,9 @@
+# Normalise to LF everywhere. This project is developed on an NTFS mount and
+# cloned on Windows as often as not; a convert.sh checked out with CRLF fails
+# under bash with "bad interpreter", which is a confusing way to learn about
+# core.autocrlf.
+* text=auto eol=lf
+
+# Never touched as text, whatever the extension detection thinks.
+*.epub binary
+*.pdf  binary

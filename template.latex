@@ -1,0 +1,471 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% template.latex — EPUB → PDF for the reMarkable 2 (10.3", portrait)
+%%
+%% Forked from `pandoc -D latex` (pandoc 3.1.3) and trimmed for this project:
+%% French-language fiction, no mathematics, no bibliography, no code listings,
+%% no beamer/CJK/bidi.  Engine: lualatex.
+%%
+%% Usage — `documentclass` MUST be passed even though the class is hardcoded
+%% below.  It is not redundant: the LaTeX *writer* reads that variable before
+%% the template is ever applied, and uses it to decide whether a level-1
+%% Header becomes \chapter or \section.  Omit it and every chapter collapses
+%% into a section, taking the PDF outline down with it.
+%%
+%%   pandoc book.epub --template=template.latex --pdf-engine=lualatex \
+%%     -V documentclass=scrbook --extract-media=media -o book.pdf
+%%
+%% Every device/typography default below is baked in so the template works
+%% with no -V soup; each one is still overridable from YAML metadata or -V.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\PassOptionsToPackage{unicode$for(hyperrefoptions)$,$hyperrefoptions$$endfor$}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Document class — KOMA-Script scrbook
+%%
+%% Page size: the device panel is 1404 x 1872 px @ 226 dpi in portrait, i.e.
+%%   width  = 157 mm     height = 209 mm
+%% KOMA's `paper=` key takes HEIGHT:WIDTH (not width:height) — hence
+%% `paper=209mm:157mm`.  Do not "fix" this to match the width-first order the
+%% device specs are quoted in.
+%%
+%% Margins are set explicitly below via \areaset, not by typearea's DIV.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\documentclass[
+$for(classoption)$
+  $classoption$,
+$endfor$
+  fontsize=$if(fontsize)$$fontsize$$else$16pt$endif$,
+  paper=$if(paperheight)$$paperheight$$else$209mm$endif$:$if(paperwidth)$$paperwidth$$else$157mm$endif$,
+  BCOR=$if(BCOR)$$BCOR$$else$0mm$endif$,  % screen, not a bound book
+  twoside=false,        % no recto/verso: every page is "right"
+  open=any,             % no blank filler page before chapters
+  chapterprefix=false,  % "Prologue", not "Chapitre 1 — Prologue"
+  parskip=never,        % novel style: indent paragraphs, no vertical gap
+  titlepage=true
+]{scrbook}  % hardcoded: this preamble is KOMA-only (\KOMAoptions,
+            % \chapterpagestyle, chapterprefix, \frontmatter …)
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Text area — explicit margins, not typearea's DIV
+%%
+%% typearea's DIV=calc default left ~21 mm of white on each side of a 157 mm
+%% page: correct for print, wasteful on a screen with no trim or gutter to
+%% allow for.  \areaset is KOMA's own escape hatch for exactly this, and keeps
+%% typearea consistent instead of fighting it with the geometry package.
+%%
+%% There are no running heads or folios, so the margin really is all the page
+%% gives up.  Tune with -V margin=<dim>; the text block is whatever is left.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newlength{\ebmargin}
+\setlength{\ebmargin}{$if(margin)$$margin$$else$10mm$endif$}
+\newlength{\ebtextwidth}
+\newlength{\ebtextheight}
+\setlength{\ebtextwidth}{\paperwidth}
+\addtolength{\ebtextwidth}{-2\ebmargin}
+\setlength{\ebtextheight}{\paperheight}
+\addtolength{\ebtextheight}{-2\ebmargin}
+\areaset[0pt]{\ebtextwidth}{\ebtextheight}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Fonts — EB Garamond (lualatex/fontspec)
+%%
+%% The installed family ships companion faces that this project deliberately
+%% uses instead of faking the effects on the regular face:
+%%   EB Garamond SC        → real small caps  (\textsc, chapter openers)
+%%   EB Garamond Initials  → decorative drop-cap glyphs (\dropcap below)
+%% Old-style figures are the correct default for running novel text.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{fontspec}
+\defaultfontfeatures{Scale=MatchLowercase}
+\defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+
+\setmainfont{$if(mainfont)$$mainfont$$else$EB Garamond$endif$}[
+  Ligatures         = {TeX,Common},
+  Numbers           = OldStyle,
+  SmallCapsFont     = {$if(scfont)$$scfont$$else$EB Garamond SC$endif$},
+  SmallCapsFeatures = {Numbers=OldStyle}$if(mainfontoptions)$,
+$for(mainfontoptions)$
+  $mainfontoptions$$sep$,
+$endfor$$endif$
+]
+$if(sansfont)$
+\setsansfont{$sansfont$}[$for(sansfontoptions)$$sansfontoptions$$sep$,$endfor$]
+$endif$
+$if(monofont)$
+\setmonofont{$monofont$}[$for(monofontoptions)$$monofontoptions$$sep$,$endfor$]
+$endif$
+$for(fontfamilies)$
+\newfontfamily{$fontfamilies.name$}[$for(fontfamilies.options)$$fontfamilies.options$$sep$,$endfor$]{$fontfamilies.font$}
+$endfor$
+
+% Decorative face used for drop caps only.
+\newfontfamily{\initialsfont}{$if(initialsfont)$$initialsfont$$else$EB Garamond Initials$endif$}
+
+% KOMA sets all headings in \sffamily, which with no sansfont declared drags
+% Latin Modern Sans into an otherwise all-Garamond book.  Force the serif
+% family back, and set chapter openers in real small caps (EB Garamond SC).
+% \normalfont, not \bfseries: the SC face has no bold, so asking for one gets
+% a substituted/synthetic weight.
+%
+% Headings need their own family rather than \addfontfeature on the main one.
+% Chapter titles in these books are bare numerals, and the old-style figures
+% used for running text are x-height, so a chapter called "1" comes out
+% indistinguishable from a small "I".  The lining figures have to be declared
+% on the family — including SmallCapsFeatures, since \scshape re-selects the SC
+% face and would otherwise drop a feature applied after the fact.
+\newfontfamily{\headingfont}{$if(mainfont)$$mainfont$$else$EB Garamond$endif$}[
+  Ligatures         = {TeX,Common},
+  Numbers           = Lining,
+  SmallCapsFont     = {$if(scfont)$$scfont$$else$EB Garamond SC$endif$},
+  SmallCapsFeatures = {Numbers=Lining},
+]
+\addtokomafont{disposition}{\rmfamily}
+\setkomafont{chapter}{\normalfont\headingfont\scshape\LARGE}
+\setkomafont{part}{\normalfont\headingfont\scshape\huge}
+\setkomafont{section}{\normalfont\headingfont\scshape\Large}
+
+% KOMA reserves a print-book-sized void above each chapter title.  On a 209 mm
+% page that is roughly a fifth of the screen gone before a word is read.
+\renewcommand*{\chapterheadstartvskip}{\vspace*{$if(chapter-topskip)$$chapter-topskip$$else$1\baselineskip$endif$}}
+
+% Straight quotes in verbatim, if available.
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Justification quality
+%%
+%% The measure is narrow (a ~130 mm text block), so justification needs help:
+%% microtype protrusion + font expansion (both cheap and reliable under
+%% lualatex) do most of the work, \emergencystretch catches the rest.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\IfFileExists{microtype.sty}{%
+  \usepackage[protrusion=true,expansion=true$for(microtypeoptions)$,$microtypeoptions$$endfor$]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath}
+}{}
+\setlength{\emergencystretch}{3em}
+
+% Novels do not tolerate widows/orphans; a short page is the lesser evil.
+\widowpenalty=10000
+\clubpenalty=10000
+\raggedbottom
+
+\setlength{\parindent}{$if(parindent)$$parindent$$else$1.2em$endif$}
+
+\usepackage{setspace}
+\usepackage{xcolor}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% No page chrome
+%%
+%% The tablet's own reader supplies page position and progress, so running
+%% heads and folios are pure wasted space on a narrow page.  KOMA needs more
+%% than \pagestyle{empty}: \chapter and friends explicitly switch to their own
+%% page style, so those have to be redirected too.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{scrlayer-scrpage}
+\pagestyle{$if(pagestyle)$$pagestyle$$else$empty$endif$}
+\renewcommand*{\chapterpagestyle}{empty}
+\renewcommand*{\partpagestyle}{empty}
+\renewcommand*{\indexpagestyle}{empty}
+\KOMAoptions{cleardoublepage=empty}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Drop caps (.lettrine in the source EPUBs)
+%%
+%% Filters translating a `.lettrine` span should emit
+%%   \dropcap{<first letter>}{<rest of the first word(s)>}
+%% rather than calling \lettrine directly, so the shape can be retuned here in
+%% one place.  2 lines, not the print-conventional 3: the page is short.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{lettrine}
+% NOT \initialsfont.  EB Garamond Initials covers only 11 capitals
+% (A D F G L N O Q T V X) — it is a decorative sampler, not an alphabet, and a
+% letter outside that set renders as *nothing at all*.  The test books need
+% C I J M P S U W À É as drop caps; every one of them is missing.  Falling back
+% per-letter would mix ornamental and plain initials from chapter to chapter,
+% so drop caps use the main serif face throughout.  Set -V initialsfont=<face>
+% and re-point this hook if a font with full coverage is ever installed.
+\renewcommand{\LettrineFontHook}{\rmfamily\mdseries\upshape}
+\setcounter{DefaultLines}{$if(dropcap-lines)$$dropcap-lines$$else$2$endif$}
+% Tuned for plain EB Garamond capitals.  (The -0.25 this once used was
+% compensating for EB Garamond Initials' ornamental frame, which descends below
+% the baseline; that face is no longer used here — see \LettrineFontHook above.)
+\renewcommand{\DefaultLoversize}{$if(dropcap-oversize)$$dropcap-oversize$$else$0.1$endif$}
+\setlength{\DefaultFindent}{0.15em}
+\setlength{\DefaultNindent}{0em}
+\providecommand{\dropcap}[2]{\lettrine{#1}{#2}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Images
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Deliberately NOT wrapped in pandoc's "graphics" conditional, unlike the
+%% stock template.  Pandoc sets that variable only when an Image element
+%% reaches the writer, but filters/cleanup.lua rewrites page images into
+%% \pageimage raw blocks — so a book whose images are *all* covers and plates
+%% arrives with no Image left, the variable is false, and graphicx, \setkeys,
+%% \clearifdirty and \pageimage all silently vanish.  The first \pageimage then
+%% dies on "Undefined control sequence".  Loading graphicx always costs nothing.
+%%
+%% (Do not write the conditional's name here in template syntax: pandoc parses
+%%  its directives inside LaTeX comments too, so the mention itself would open
+%%  a conditional that never closes.)
+\usepackage{graphicx}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Fit every image to the text block, scaling UP as well as down.
+%
+% The obvious \maxwidth/\maxheight (pandoc's default) only ever shrinks, and
+% leaves anything smaller at its "natural" size — which here means whatever the
+% JFIF density field claims. That field is unreliable in these EPUBs: one book
+% tags its ornaments 1 dpi and 300 dpi interchangeably, and its 1209x1860 title
+% page as 300 dpi, so LaTeX drew it at 102x157 mm and simply left it small.
+% keepaspectratio means the binding dimension wins, so wide banners scale to
+% the width and tall page images to the height.
+\setkeys{Gin}{width=\linewidth,height=\textheight,keepaspectratio}
+
+% Break the page only if something is already on it.  filters/cleanup.lua puts
+% each page image on a page of its own; a plain \clearpage in front would emit
+% a blank page whenever the image already begins one — which is exactly the
+% case for the cover, and for any two page images in a row.
+\newcommand{\clearifdirty}{\ifdim\pagetotal>0pt\relax\clearpage\fi}
+
+% Cover / title-page artwork, alone on its page and vertically centred.
+% filters/cleanup.lua emits \pageimage{<path>} for these.
+%
+% The height cap is below 1.0 on purpose.  At a full \textheight the picture
+% plus the surrounding vertical glue no longer fits the page, so it is carried
+% over and leaves a blank page behind it — which is what a plain
+% \begin{center} did here.  \null anchors the first \vfill, since glue at the
+% top of a page is discarded.
+\newcommand{\pageimage}[1]{%
+  \clearifdirty
+  \null\vfill
+  {\centering
+   \includegraphics[width=\linewidth,%
+                    height=$if(pageimage-height)$$pageimage-height$$else$0.95$endif$\textheight,%
+                    keepaspectratio]{#1}\par}%
+  \vfill
+  \clearpage}
+
+% Front-matter units — jacket, blurb, dedication — each stand alone on a page,
+% and jammed against the top margin they read as mistakes rather than as front
+% matter.  filters/cleanup.lua wraps every pre-chapter block in this pair.
+%
+% Not named \beginfrontpage/\endfrontpage: LaTeX reserves \end<name> for an
+% environment's closing code, so \newcommand{\endfrontpage} is rejected
+% outright ("Or name \end... illegal").
+\newcommand{\frontpagetop}{\clearifdirty\null\vfill}
+\newcommand{\frontpagebottom}{\vfill\clearpage}
+\makeatletter
+\def\fps@figure{htbp}
+\makeatother
+$if(svg)$
+\usepackage{svg}
+$endif$
+$if(strikeout)$
+\usepackage{luacolor}
+\usepackage[soul]{lua-ul}
+$endif$
+$if(tables)$
+\usepackage{longtable,booktabs,array}
+\usepackage{calc}
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+$endif$
+$if(verbatim-in-note)$
+\usepackage{fancyvrb}
+$endif$
+
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+% Unnumbered chapters by default — this is a novel, not a report.
+$if(numbersections)$
+\setcounter{secnumdepth}{$if(secnumdepth)$$secnumdepth$$else$5$endif$}
+$else$
+\setcounter{secnumdepth}{-\maxdimen}
+$endif$
+
+% Make \paragraph and \subparagraph free-standing (pandoc assumes this).
+$if(block-headings)$
+\ifx\paragraph\undefined\else
+  \let\oldparagraph\paragraph
+  \renewcommand{\paragraph}[1]{\oldparagraph{#1}\mbox{}}
+\fi
+\ifx\subparagraph\undefined\else
+  \let\oldsubparagraph\subparagraph
+  \renewcommand{\subparagraph}[1]{\oldsubparagraph{#1}\mbox{}}
+\fi
+$endif$
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% French typography — polyglossia, NOT babel
+%%
+%% pandoc's stock template loads babel via \babelprovide[import], which pulls
+%% only the .ini and therefore does NOT install French's punctuation-spacing
+%% rules.  polyglossia's french gloss does, natively under lualatex:
+%%   * thin non-breaking space before  ;  :  !  ?      (autospacing)
+%%   * « guillemets » with the correct inner spacing   (autospaceguillemets)
+%%   * French hyphenation patterns — critical at this measure
+%% csquotes then maps pandoc's \enquote{} onto those guillemets; `autostyle`
+%% is what ties it to the active language, and omitting it silently leaves
+%% English "quotes" in place.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{polyglossia}
+% French unless told otherwise, and deliberately NOT taken from the EPUB's own
+% metadata: these files routinely declare the wrong language.  One French
+% translation in the test corpus — French from cover to cover — reports
+% dc:language en, which would set the entire novel in English and lose every
+% French spacing and hyphenation rule.  Override with -V mainlanguage=<gloss> if a book needs it.
+\setmainlanguage[$if(mainlanguage-options)$$mainlanguage-options$$else$autospacing=true,autospaceguillemets=true$endif$]{$if(mainlanguage)$$mainlanguage$$else$french$endif$}
+
+% Secondary languages, taken from babel-otherlangs.
+%
+% Not polyglossia-otherlangs: pandoc 3.1.3 no longer populates any
+% polyglossia-* template variable — only the babel-* ones — so a loop over it
+% is dead code that silently declares nothing.  Meanwhile the writer still
+% emits \foreignlanguage{...} for every lang-tagged span it finds, and
+% polyglossia raises a *critical* error on an undeclared language, which is a
+% hard build failure rather than a warning.
+%
+% The gloss-<name>.ldf guard covers babel names polyglossia does not know; it
+% ships 241 glosses, so a miss is rare.  Language names mostly coincide across
+% the two packages ("american" is a real gloss, not just a babel alias).
+$for(babel-otherlangs)$
+\IfFileExists{gloss-$babel-otherlangs$.ldf}{\setotherlanguage{$babel-otherlangs$}}{}
+$endfor$
+
+\usepackage[autostyle=true,french=guillemets$for(csquotesoptions)$,$csquotesoptions$$endfor$]{csquotes}
+
+% polyglossia's `autospaceguillemets` is inert under lualatex — its punct
+% module (polyglossia-punct.lua) only handles ; : ! ?, never « ».  In practice
+% the source EPUBs already carry U+00A0 inside their guillemets, so they come
+% through correctly; this only covers the other path, where pandoc's
+% `csquotes: true` turns a Quoted inline into \enquote{} and there is no
+% source space to preserve.  Without it \enquote gives «texte», unspaced.
+\DeclareQuoteStyle{french}
+  {\guillemotleft\nobreakspace}{\nobreakspace\guillemotright}
+  {\guilsinglleft\nobreakspace}{\nobreakspace\guilsinglright}
+
+$for(header-includes)$
+$header-includes$
+$endfor$
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Links and PDF outline
+%%
+%% bookmarks=true is the whole chapter-navigation story on the tablet, so this
+%% block must survive any future edit: no page numbers means the outline is
+%% the only way to move around the book.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\IfFileExists{bookmark.sty}{\usepackage{bookmark}}{\usepackage{hyperref}}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{}
+\urlstyle{$if(urlstyle)$$urlstyle$$else$same$endif$}
+$if(links-as-notes)$
+\DeclareRobustCommand{\href}[2]{#2\footnote{\url{#1}}}
+$endif$
+$if(verbatim-in-note)$
+\VerbatimFootnotes
+$endif$
+\hypersetup{
+  bookmarks=true,
+  bookmarksnumbered=false,
+  bookmarksopen=true,
+  bookmarksopenlevel=1,
+$if(title-meta)$
+  pdftitle={$title-meta$},
+$endif$
+$if(author-meta)$
+  pdfauthor={$author-meta$},
+$endif$
+  pdflang={$if(lang)$$lang$$else$fr-FR$endif$},
+$if(subject)$
+  pdfsubject={$subject$},
+$endif$
+$if(keywords)$
+  pdfkeywords={$for(keywords)$$keywords$$sep$, $endfor$},
+$endif$
+$if(colorlinks)$
+  colorlinks=true,
+  linkcolor={$if(linkcolor)$$linkcolor$$else$Maroon$endif$},
+  filecolor={$if(filecolor)$$filecolor$$else$Maroon$endif$},
+  urlcolor={$if(urlcolor)$$urlcolor$$else$Blue$endif$},
+$else$
+  hidelinks,
+$endif$
+  pdfcreator={LaTeX via pandoc}}
+
+$if(title)$
+\title{$title$$if(thanks)$\thanks{$thanks$}$endif$}
+$endif$
+$if(subtitle)$
+\usepackage{etoolbox}
+\makeatletter
+\providecommand{\subtitle}[1]{\apptocmd{\@title}{\par {\large #1 \par}}{}{}}
+\makeatother
+\subtitle{$subtitle$}
+$endif$
+\author{$for(author)$$author$$sep$ \and $endfor$}
+% Suppressed by default.  In these EPUBs `date` is the Calibre *conversion*
+% timestamp, not a publication date, so the stock \date{$date$} puts e.g.
+% "2019-10-17T14:01:42Z" under the author — and French autospacing then adds
+% thin spaces before its colons, rendering it "14 :01 :42Z".  Pass
+% -V showdate=true if a book ever carries a real date worth printing.
+\date{$if(showdate)$$date$$endif$}
+
+\begin{document}
+$if(has-frontmatter)$
+\frontmatter
+$endif$
+$if(title)$
+$if(has-cover-image)$
+$-- The book opens with the publisher's own cover/title-page artwork (detected
+$-- by filters/cleanup.lua), so a typeset title page here would only duplicate
+$-- it. pdftitle/pdfauthor are set from title-meta above either way.
+$else$
+\maketitle
+$endif$
+$if(abstract)$
+\begin{abstract}
+$abstract$
+\end{abstract}
+$endif$
+$endif$
+
+$for(include-before)$
+$include-before$
+
+$endfor$
+$if(toc)$
+$if(toc-title)$
+\renewcommand*\contentsname{$toc-title$}
+$endif$
+{
+\setcounter{tocdepth}{$toc-depth$}
+\tableofcontents
+}
+$endif$
+$if(linestretch)$
+\setstretch{$linestretch$}
+$endif$
+$if(has-frontmatter)$
+\mainmatter
+$endif$
+$body$
+
+$if(has-frontmatter)$
+\backmatter
+$endif$
+$for(include-after)$
+$include-after$
+
+$endfor$
+\end{document}
