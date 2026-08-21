@@ -24,6 +24,8 @@ layout itself lives in template.latex, which this filter only calls into):
 Scope note for (1): only SoftBreak is touched, never Space. Measured on
 test.epub, SoftBreak precedes . 295x  , 172x  ’ 4x  ) 3x  … 2x, whereas a real
 Space only ever precedes ':' (2x) — which is correct French and must survive.
+Which punctuation that covers depends on the book's language (-M lang=en), as
+does the front matter recognised in (3): see LANGUAGES below.
 
 Edition-specific: the 2019 "Tome 5" edition has 4 SoftBreaks total and needs
 neither fix, while test.epub and the 2017 edition have ~470 each. Validating
@@ -39,6 +41,13 @@ see a -M flag at all.
 -- Settings.  Every one is overridable with -M <key>=<value>.
 --------------------------------------------------------------------------
 local settings = {
+  -- The book's language, as an ISO 639-1 code; -M lang=en. Only the family is
+  -- used ('en-GB' and 'en' select the same rules), and it decides two things:
+  -- which punctuation may carry a space before it, and which publisher's
+  -- boilerplate the front-matter pass recognises. Set by convert.sh's -l, and
+  -- French unless told otherwise, like the template's \setmainlanguage.
+  ['lang'] = 'fr',
+
   -- Longest side, in pixels, at or below which an image is a decoration
   -- rather than artwork. The corpus splits cleanly: nothing between 189 px
   -- (a publisher's mark) and 300 px (a chapter banner).
@@ -98,11 +107,8 @@ end
 -- Line-wrap repair
 --------------------------------------------------------------------------
 
--- Punctuation that must never carry a space before it in French.
--- ; : ! ? and » are deliberately absent: those *do* take a space in French,
--- and polyglossia normalises whatever precedes them into the correct thin or
--- full space, so leaving their SoftBreaks alone is what keeps them right.
-local TIGHT = {
+-- Punctuation that must never carry a space before it, whatever the language.
+local TIGHT_ALWAYS = {
   ['.'] = true,
   [','] = true,
   [')'] = true,
@@ -110,19 +116,97 @@ local TIGHT = {
   ['’'] = true,
 }
 
--- Initials that are themselves complete French words, so the gap after them is
--- a real word break rather than a line wrap.
+--- Everything in this filter that depends on the book's language, in one table.
 --
--- The source cannot tell these apart: "À</span>\n l’heure" and "I</span>\n l
--- s’agit" are byte-for-byte the same shape, yet the first must stay "À
--- l’heure" and the second must close up into "Il s’agit". Only the letter
--- distinguishes them.
+-- `tight`      punctuation a SoftBreak before it must be dropped for.
+-- `standalone` initials that are a complete word, so a drop cap must not pull
+--              the next word into itself.
+-- `boilerplate` Lua patterns (lowercased text) marking a front-matter page as
+--              the publisher's rather than the author's. Language-neutral ones
+--              live in BOILERPLATE_MARKERS, further down with the code using
+--              them; these are the ones only that language's editions carry.
 --
--- 'A' is deliberately absent: as a drop cap it far more often opens "Après",
--- "Alors", "Aucun" than it stands as the bare word "A", so joining is the
--- better bet. Accented 'À' is the opposite — it is nearly always the
--- preposition.
-local STANDALONE_WORD = { ['À'] = true, ['Y'] = true, ['Ô'] = true }
+-- Adding a language means adding an entry here and a case in convert.sh's -l;
+-- anything not listed falls back to DEFAULT_RULES, whose punctuation rules are
+-- right for every European language except French.
+local LANGUAGES = {
+  fr = {
+    -- ; : ! ? and » are deliberately absent: those *do* take a space in
+    -- French, and polyglossia normalises whatever precedes them into the
+    -- correct thin or full space, so leaving their SoftBreaks alone is what
+    -- keeps them right.
+    tight = TIGHT_ALWAYS,
+
+    -- The source cannot tell these apart: "À</span>\n l’heure" and
+    -- "I</span>\n l s’agit" are byte-for-byte the same shape, yet the first
+    -- must stay "À l’heure" and the second must close up into "Il s’agit".
+    -- Only the letter distinguishes them.
+    --
+    -- 'A' is deliberately absent: as a drop cap it far more often opens
+    -- "Après", "Alors", "Aucun" than it stands as the bare word "A", so
+    -- joining is the better bet. Accented 'À' is the opposite — it is nearly
+    -- always the preposition.
+    standalone = { ['À'] = true, ['Y'] = true, ['Ô'] = true },
+
+    boilerplate = {
+      '%f[%a]ean%f[%A]',
+      'dépôt légal',
+      'tous droits réservés',
+      'titre original',
+      'du même auteur',
+      "achevé d'imprimer",
+      'propriété intellectuelle',
+      'loi n° 57%-298',
+    },
+  },
+
+  en = {
+    tight = nil, -- filled in below: the default set
+
+    -- 'A' and 'I' are both complete words in English, and 'O' is the vocative
+    -- of the fantasy novels this pipeline is mostly fed. 'I' is the coin toss
+    -- the French 'A' is: an opening "I" stands alone about as often as it
+    -- starts "It"/"In"/"If", and the two failures cost the same — "Ihad" one
+    -- way, "I t was" the other. The pronoun is the bet taken here.
+    standalone = { ['A'] = true, ['I'] = true, ['O'] = true },
+
+    boilerplate = {
+      'all rights reserved',
+      'first published',
+      'published by',
+      'no part of this',
+      '%f[%a]also by%f[%A]',
+      'library of congress',
+      'catalogu?ing%-in%-publication',
+      'printed in the',
+    },
+  },
+}
+
+-- Outside French, none of ; : ! ? ” takes a space before it and no package
+-- will fix one up later, so the filter has to close those wraps itself.
+local DEFAULT_RULES = {
+  tight = {},
+  standalone = {},
+  boilerplate = {},
+}
+for char in pairs(TIGHT_ALWAYS) do
+  DEFAULT_RULES.tight[char] = true
+end
+for _, char in ipairs({ ';', ':', '!', '?', '”' }) do
+  DEFAULT_RULES.tight[char] = true
+end
+LANGUAGES.en.tight = DEFAULT_RULES.tight
+
+-- The rules in force, replaced once the -M settings have been read. Meta runs
+-- in the first of the two filters returned at the bottom of this file, so it
+-- is always resolved before any handler that consults it.
+local rules = LANGUAGES.fr
+
+local function resolve_rules()
+  local family = tostring(settings.lang):lower():match('^%a+') or ''
+  rules = LANGUAGES[family] or DEFAULT_RULES
+end
 
 local function first_char(s)
   return pandoc.text.sub(s, 1, 1)
@@ -499,18 +583,15 @@ local BOILERPLATE_CLASSES = {
 -- Lua patterns, not plain substrings. The short ones need their word
 -- boundaries: a bare "ean" matched "Jean Marchand" and threw away a
 -- twelve-page dramatis personae.
+--
+-- These are the ones a copyright page carries in any language; the wording
+-- that is particular to one is in LANGUAGES[…].boilerplate, and only the
+-- book's own language contributes, so an English novel is never read against
+-- "titre original".
 local BOILERPLATE_MARKERS = {
   'isbn',
-  '%f[%a]ean%f[%A]',
   'copyright',
   '©',
-  'dépôt légal',
-  'tous droits réservés',
-  'titre original',
-  'du même auteur',
-  "achevé d'imprimer",
-  'propriété intellectuelle',
-  'loi n° 57%-298',
   'https?://',
   'www%.',
   'e%-mail',
@@ -535,9 +616,11 @@ local function is_publisher_boilerplate(text, blocks)
   end
 
   local lowered = pandoc.text.lower(text)
-  for _, marker in ipairs(BOILERPLATE_MARKERS) do
-    if lowered:find(marker) then
-      return true
+  for _, markers in ipairs({ BOILERPLATE_MARKERS, rules.boilerplate }) do
+    for _, marker in ipairs(markers) do
+      if lowered:find(marker) then
+        return true
+      end
     end
   end
   return false
@@ -944,7 +1027,7 @@ local function Inlines(inlines)
         -- drop cap's small-caps argument.
         while i <= n do
           local nx = inlines[i]
-          if nx.t == 'SoftBreak' and #tail == 0 and not STANDALONE_WORD[letter] then
+          if nx.t == 'SoftBreak' and #tail == 0 and not rules.standalone[letter] then
             -- Still hunting for the start of the word. There can be several
             -- of these, with invisible page anchors between them; skipping
             -- only the first leaves a stray one that reopens the "W axillium"
@@ -973,7 +1056,7 @@ local function Inlines(inlines)
     elseif el.t == 'SoftBreak'
        and i < n
        and inlines[i + 1].t == 'Str'
-       and TIGHT[first_char(inlines[i + 1].text)] then
+       and rules.tight[first_char(inlines[i + 1].text)] then
       -- Drop the wrap so the punctuation closes up against the word.
       i = i + 1
       changed = true
@@ -991,7 +1074,12 @@ local function Inlines(inlines)
 end
 
 return {
-  { Meta = read_settings },
+  {
+    Meta = function(meta)
+      read_settings(meta)
+      resolve_rules()
+    end,
+  },
   {
     Inlines = Inlines,
     Image = Image,

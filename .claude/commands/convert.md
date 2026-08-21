@@ -17,9 +17,14 @@ Rules:
 - If no argument was given, ask which books to convert rather than converting
   all of `ebooks/` — the real novels take minutes each.
 - The script's options are `-o DIR` (output directory), `-m DIM` (page margin),
-  `-s SIZE` (base font size), `-V K=V` and `-M K=V` (repeatable, passed
+  `-s SIZE` (base font size), `-l LANG` (language of the book: `fr` by default,
+  `en`/`en-GB` for an English one), `-V K=V` and `-M K=V` (repeatable, passed
   straight to pandoc) and `-k` (keep the build log on success). Pass them
   through as given; do not invent defaults.
+- The language is not guessed, by the script or by you: convert with whatever
+  `-l` the user gave. If they name a book you can see is not French and gave no
+  `-l`, say so and ask before converting — a French-typeset English novel comes
+  out with spaces before its exclamation marks and the wrong hyphenation.
 - On failure the build log is kept next to the PDF. Read its tail, say what
   actually broke, and do not retry the same command unchanged.
 - Report per book: page count and warning count, both printed by the script.

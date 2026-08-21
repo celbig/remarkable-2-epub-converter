@@ -2,10 +2,12 @@
 
 ## Goal
 
-Build a LaTeX template + Pandoc Lua filters that convert French-language EPUB
-novels into PDFs laid out for the reMarkable 2's screen (not a generic
-A4/Letter page). The pipeline is: `epub → pandoc (+ lua filters) → LaTeX
-(lualatex) → pdf`.
+Build a LaTeX template + Pandoc Lua filters that convert EPUB novels into PDFs
+laid out for the reMarkable 2's screen (not a generic A4/Letter page). The
+corpus is French and French is the default throughout, but the language is a
+per-book choice (`convert.sh -l en`, see "Language" under the settled design
+decisions), and English is supported to the same depth. The pipeline is:
+`epub → pandoc (+ lua filters) → LaTeX (lualatex) → pdf`.
 
 ## Confirmed toolchain (this machine)
 
@@ -142,14 +144,39 @@ Requirements for this device, deliberately different from print defaults:
   `\KOMAoptions{headings=...}`/`scrlayer-scrpage`, before defaulting to the
   classic LaTeX command) to keep the narrow-margin page free of chrome; the
   tablet's own PDF viewer supplies page position/progress.
+- **Language: French by default, and always the caller's decision.** The
+  book's language is set by `convert.sh -l <lang>` (`fr` if omitted), never
+  read from the EPUB: `dc:language` is wrong often enough in this corpus —
+  one French novel declares `en` cover to cover — that trusting it would set
+  a French book in English and lose every spacing and hyphenation rule. `-l`
+  fans out into three consistent settings: `-V mainlanguage=<polyglossia
+  gloss>` (+ `-V mainlanguage-options=variant=…` where the gloss has one),
+  `-V lang=<BCP-47>` for `pdflang`, and `-M lang=<code>` for the filter.
+  Nothing is passed when `-l` is absent, so the default command is the one it
+  always was. Consequences to keep in mind when editing:
+  - The template must not hardcode French gloss options.
+    `autospacing`/`autospaceguillemets` are keys only `gloss-french.ldf`
+    defines *and* ones it already defaults to `true`, so putting them in
+    `\setmainlanguage[…]` gained nothing and made every other language a hard
+    build failure. The option list is now whatever `mainlanguage-options`
+    holds, usually empty.
+  - Everything language-dependent in `filters/cleanup.lua` lives in one
+    `LANGUAGES` table (tight punctuation, standalone drop-cap initials,
+    publisher-boilerplate patterns); a language not listed falls back to
+    `DEFAULT_RULES`, which is right for every European language but French.
+    Adding a language means one entry there and one case in both scripts.
+  - `csquotes`'s `autostyle=true` already follows the active language, so
+    quotation marks need no per-language work.
 - **Front matter: trim the publisher's, keep the author's.** Everything
   before the first chapter is grouped by EPUB spine file and each group is
-  laid out as one unit. Copyright/ISBN/legal pages, "Du même auteur"
-  catalogues and the marks left by whoever digitised the file are dropped;
-  cover, title page, dedication, maps and dramatis personae are kept. The
-  test is a class (`.cop`, `.pagecopyright`, `.titrevo`, `.ours`) or a
-  marker in the text (`ISBN`, `©`, `Titre original`, `www.`, …), applied
-  only in the pre-chapter region. Short marker patterns need word
+  laid out as one unit. Copyright/ISBN/legal pages, "Du même auteur" /
+  "Also by" catalogues and the marks left by whoever digitised the file are
+  dropped; cover, title page, dedication, maps and dramatis personae are
+  kept. The test is a class (`.cop`, `.pagecopyright`, `.titrevo`, `.ours`)
+  or a marker in the text — language-neutral ones (`ISBN`, `©`, `www.`, …)
+  plus the set for the book's own language (`Titre original`, `Dépôt légal`;
+  `All rights reserved`, `Library of Congress`) — applied only in the
+  pre-chapter region. Short marker patterns need word
   boundaries: a bare `ean` matched "Jean Marchand" and threw away a
   twelve-page cast list. Trimming is lossy, so every drop prints a
   `[WARNING]`, which is the prefix `convert.sh` already counts. `-M
@@ -284,9 +311,12 @@ publisher/converter class names.
 
 ## French typographic conventions (required for final output)
 
-The source material and target audience are French, so the rendered PDF
+Most of the corpus is French and French is the default, so the rendered PDF
 must follow standard French typography, not the pandoc/LaTeX English
-defaults:
+defaults. Everything in this section describes the French mode; under
+`-l en` the same rules run the other way (no space before `; : ! ?`,
+“curly quotes” rather than guillemets, English hyphenation), which is why
+none of it may be hardcoded where the language cannot reach it:
 
 - **Guillemets**, not straight/curly double quotes, for dialogue and
   quotations: `« texte »` (note the non-breaking space *inside* the
@@ -310,10 +340,12 @@ defaults:
   filter normalize dashes to `-` or `--`.
 - **Capitalized letters keep their accents** (`École`, not `Ecole`) — don't
   add any uppercase-normalization filter that strips diacritics.
-- Use `polyglossia`'s French hyphenation patterns (implied by `lang: fr` on
-  lualatex) rather than leaving hyphenation on the English default —
-  critical at this tablet's narrow column width where justified text without
-  correct hyphenation will look bad or overflow.
+- Use `polyglossia`'s French hyphenation patterns (implied by
+  `\setmainlanguage{french}`, which is the template's default) rather than
+  leaving hyphenation on the English default — critical at this tablet's
+  narrow column width where justified text without correct hyphenation will
+  look bad or overflow. The same argument is why an English book has to be
+  converted with `-l en` rather than left on the French default.
 
 ## Workflow notes
 

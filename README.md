@@ -1,17 +1,20 @@
 # EPUB → PDF for the reMarkable 2
 
 Novels bought as EPUBs are laid out for whatever screen happens to open them.
-This pipeline pins that down: it takes a French EPUB and typesets a PDF for one
-specific screen — the reMarkable 2's 10.3" panel — so the page you read looks
-like a printed novel rather than a reflowed web page.
+This pipeline pins that down: it takes an EPUB — French by default, English or
+another language with `-l` — and typesets a PDF for one specific screen — the
+reMarkable 2's 10.3" panel — so the page you read looks like a printed novel
+rather than a reflowed web page.
 
 ```
 epub → pandoc (+ Lua filter) → LaTeX (lualatex) → pdf
 ```
 
 What comes out: a 157 × 209 mm page with 10 mm margins, set in 16 pt EB
-Garamond, with proper French typography (guillemets, thin spaces before `; : ! ?`,
-French hyphenation), drop caps where the publisher used them, no running heads
+Garamond, with the typography of the book's own language (in French:
+guillemets, thin spaces before `; : ! ?`, French hyphenation; in English:
+“quotes”, no space before those marks, English hyphenation), drop caps where
+the publisher used them, no running heads
 or page numbers cluttering a small screen, and a PDF outline so chapter
 navigation works on the device. The book opens on its cover and its own title
 page rather than on the publisher's ISBN block, and ornaments are drawn at the
@@ -49,6 +52,7 @@ Put your EPUBs anywhere — `ebooks/` is the habitual place — and run:
 ./convert.sh "ebooks/My Book.epub"          # one book
 ./convert.sh ebooks/*.epub                  # the whole shelf
 ./convert.sh -m 8mm -s 18pt ebooks/*.epub   # tighter margins, larger type
+./convert.sh -l en "ebooks/A Novel.epub"    # an English book
 ```
 
 Options:
@@ -58,6 +62,7 @@ Options:
 | `-o DIR` | where to write the PDFs | `./output` |
 | `-m DIM` | page margin | `10mm` |
 | `-s SIZE` | base font size | `16pt` |
+| `-l LANG` | language of the book | `fr` |
 | `-V K=V` | set a template variable, repeatable | |
 | `-M K=V` | set a document setting, repeatable | |
 | `-k` | keep the build log even when the book converts cleanly | off |
@@ -66,6 +71,23 @@ Options:
 Each book becomes `output/<name of the epub>.pdf`. If a conversion fails, the
 build log is kept next to where the PDF would have gone and the last lines are
 printed; on success the log is deleted unless you passed `-k`.
+
+`-l` is the one option worth passing for a book that is not French. It picks
+four things at once: the hyphenation patterns, whether `; : ! ?` take a space
+before them (French) or not (everything else), which quotation marks `\enquote`
+produces, and which publisher's front matter the filter recognises — an English
+edition's *All rights reserved* and *Also by* pages are dropped exactly as a
+French one's *Tous droits réservés* and *Du même auteur* are. It takes
+`fr`, `fr-FR`, `fr-CA`, `en`, `en-US`, `en-GB`, and `de`, `es`, `it`, `nl`,
+`pt`; only French and English have their punctuation and front-matter rules
+tuned, the rest get correct typesetting and the non-French defaults. Any other
+polyglossia language still works the long way round:
+`-V mainlanguage=<gloss> -V lang=<bcp47> -M lang=<code>`.
+
+The language is never guessed from the EPUB. These files declare it wrongly
+often enough — one French novel in the test shelf reports `dc:language en` from
+cover to cover — that trusting the metadata would silently ruin the typography
+of the books this pipeline exists for.
 
 `-V` reaches the template, `-M` reaches the filter. The ones you are most
 likely to want:

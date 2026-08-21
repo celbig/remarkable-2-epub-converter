@@ -2,8 +2,9 @@
 %% template.latex — EPUB → PDF for the reMarkable 2 (10.3", portrait)
 %%
 %% Forked from `pandoc -D latex` (pandoc 3.1.3) and trimmed for this project:
-%% French-language fiction, no mathematics, no bibliography, no code listings,
-%% no beamer/CJK/bidi.  Engine: lualatex.
+%% fiction — French by default, any polyglossia language via `mainlanguage` —
+%% no mathematics, no bibliography, no code listings, no beamer/CJK/bidi.
+%% Engine: lualatex.
 %%
 %% Usage — `documentclass` MUST be passed even though the class is hardcoded
 %% below.  It is not redundant: the LaTeX *writer* reads that variable before
@@ -369,7 +370,7 @@ $if(block-headings)$
 $endif$
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% French typography — polyglossia, NOT babel
+%% Typography of the book's language — polyglossia, NOT babel
 %%
 %% pandoc's stock template loads babel via \babelprovide[import], which pulls
 %% only the .ini and therefore does NOT install French's punctuation-spacing
@@ -377,17 +378,25 @@ $endif$
 %%   * thin non-breaking space before  ;  :  !  ?      (autospacing)
 %%   * « guillemets » with the correct inner spacing   (autospaceguillemets)
 %%   * French hyphenation patterns — critical at this measure
-%% csquotes then maps pandoc's \enquote{} onto those guillemets; `autostyle`
-%% is what ties it to the active language, and omitting it silently leaves
-%% English "quotes" in place.
+%% csquotes then maps pandoc's \enquote{} onto the quotation marks of the
+%% language in force; `autostyle` is what ties it to that language, and
+%% omitting it silently leaves English "quotes" in place whatever the book is.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \usepackage{polyglossia}
 % French unless told otherwise, and deliberately NOT taken from the EPUB's own
 % metadata: these files routinely declare the wrong language.  One French
 % translation in the test corpus — French from cover to cover — reports
 % dc:language en, which would set the entire novel in English and lose every
-% French spacing and hyphenation rule.  Override with -V mainlanguage=<gloss> if a book needs it.
-\setmainlanguage[$if(mainlanguage-options)$$mainlanguage-options$$else$autospacing=true,autospaceguillemets=true$endif$]{$if(mainlanguage)$$mainlanguage$$else$french$endif$}
+% French spacing and hyphenation rule.  The language is a decision the caller
+% makes: -V mainlanguage=<gloss> (convert.sh's -l does it for you).
+%
+% No default option list here.  The two that used to be hardcoded,
+% autospacing and autospaceguillemets, are set true by gloss-french.ldf itself
+% (lines 94 and 101), so spelling them out bought nothing — and it broke every
+% other language, whose gloss does not define those keys at all and whose
+% \setkeys therefore fails the build.  Pass -V mainlanguage-options=... for
+% the gloss's own keys, e.g. variant=british, variant=canadian.
+\setmainlanguage[$mainlanguage-options$]{$if(mainlanguage)$$mainlanguage$$else$french$endif$}
 
 % Secondary languages, taken from babel-otherlangs.
 %
@@ -413,6 +422,8 @@ $endfor$
 % through correctly; this only covers the other path, where pandoc's
 % `csquotes: true` turns a Quoted inline into \enquote{} and there is no
 % source space to preserve.  Without it \enquote gives «texte», unspaced.
+% Scoped to the french style, so it is inert when the book is set in another
+% language and csquotes picks that language's own marks.
 \DeclareQuoteStyle{french}
   {\guillemotleft\nobreakspace}{\nobreakspace\guillemotright}
   {\guilsinglleft\nobreakspace}{\nobreakspace\guilsinglright}
@@ -448,6 +459,8 @@ $endif$
 $if(author-meta)$
   pdfauthor={$author-meta$},
 $endif$
+  % Same default as \setmainlanguage above: French unless the caller says
+  % otherwise, and set from -V lang=<bcp47>, not from the EPUB's metadata.
   pdflang={$if(lang)$$lang$$else$fr-FR$endif$},
 $if(subject)$
   pdfsubject={$subject$},
