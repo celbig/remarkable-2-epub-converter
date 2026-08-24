@@ -311,6 +311,51 @@ local function pixel_size(data)
   end
 end
 
+-- The largest natural size a JPEG may claim before its density is treated as
+-- broken. TeX cannot hold a dimension over 16383.99 pt — about 227 in — and a
+-- picture is measured before it is scaled, so anything near that ceiling kills
+-- the build; no real ebook image is a hundred inches across either way.
+local JPEG_MAX_NATURAL_INCHES = 100
+
+--- Repair a JFIF density that LaTeX cannot survive. Returns patched bytes.
+--
+-- luatex takes a JPEG's natural size from its own JFIF density field, and no
+-- \includegraphics option overrides it: bb, natwidth and an explicit
+-- width=\linewidth all still measure the file first. One cover in this corpus
+-- declares 1 dpi, which turns 441x686 px into a 441 x 686 *inch* picture --
+-- 31871 pt -- and the build dies on "Dimension too large" at the \pageimage
+-- before any of the sizing rules below get a say.
+--
+-- So repair the file rather than the markup: rewrite the density to 72 dpi,
+-- which is already what a PNG or GIF without one is assumed to be here, and
+-- put the patched bytes back in the mediabag. Pandoc writes the mediabag out
+-- beside the .tex it hands to lualatex, so the engine reads the corrected
+-- header. Nothing visible changes: page images are fitted to the text block
+-- and decorations get an explicit size in mm, so a JPEG's density only ever
+-- decided whether the book built at all.
+local function repaired_jpeg_density(data, w, h)
+  -- APP0 immediately after SOI, carrying the JFIF identifier: units at byte
+  -- 14, then the two 16-bit densities. Anything else (EXIF-only, no APP0)
+  -- has no field to repair.
+  if #data < 18 or data:sub(1, 4) ~= '\255\216\255\224'
+     or data:sub(7, 11) ~= 'JFIF\0' then
+    return nil
+  end
+  local units = data:byte(14)
+  local xd, yd = be16(data, 15), be16(data, 17)
+  if units == 0 or xd == 0 or yd == 0 then
+    return nil -- no physical density claimed; luatex falls back to 72 dpi
+  end
+  if units == 2 then -- dots per cm
+    xd, yd = xd * 2.54, yd * 2.54
+  end
+  if w / xd <= JPEG_MAX_NATURAL_INCHES
+     and h / yd <= JPEG_MAX_NATURAL_INCHES then
+    return nil
+  end
+  return data:sub(1, 13) .. '\1\0\72\0\72' .. data:sub(19)
+end
+
 -- A single book reaches for the same ornament up to ninety times and
 -- mediabag.lookup copies the whole file on every call, so measure once.
 local size_cache = {}
@@ -323,10 +368,16 @@ local function image_pixels(src)
     end
     return cached[1], cached[2]
   end
-  local _, data = pandoc.mediabag.lookup(src)
+  local mime, data = pandoc.mediabag.lookup(src)
   local w, h
   if data then
     w, h = pixel_size(data)
+    if w and h then
+      local repaired = repaired_jpeg_density(data, w, h)
+      if repaired then
+        pandoc.mediabag.insert(src, mime, repaired)
+      end
+    end
   end
   size_cache[src] = (w and h) and { w, h } or false
   return w, h
@@ -368,6 +419,13 @@ end
 -- handlers first, so by the time Pandoc() sees the document every page image
 -- has already become a \pageimage raw block, and a walk for Image elements
 -- would find nothing at all.
+--
+-- Two places set it, which is why set_cover_flag() reads it only as Pandoc()
+-- returns: the block handlers, for a picture named or classed as a cover, and
+-- the front-matter pass, for a front-matter page that turns out to be nothing
+-- but pictures. Books like The Imposter King, whose cover is a bare
+-- `the-imposter-king-final.jpg` with no hint in its name or class, are
+-- recognised only the second way.
 local saw_page_image = false
 
 --- Is this an image that deserves a page to itself?
@@ -760,11 +818,22 @@ end
 -- Handlers
 --------------------------------------------------------------------------
 
-local function Pandoc(doc)
+--- Hand saw_page_image to the template, unless the caller has already spoken.
+--
+-- Called on the way out of Pandoc(), never on the way in: the block handlers
+-- are not the only thing that places a page image. A front-matter unit made
+-- of nothing but pictures gets each of them a page of its own, and that
+-- happens in the front-matter pass below — so reading the flag first left it
+-- false for every book whose cover is recognised only that way, and those
+-- books opened on a typeset title page with the cover behind it.
+local function set_cover_flag(doc)
   if doc.meta['has-cover-image'] == nil then
     doc.meta['has-cover-image'] = saw_page_image
   end
+  return doc
+end
 
+local function Pandoc(doc)
   local first_chapter = nil
   for i, block in ipairs(doc.blocks) do
     if opens_a_chapter(block) then
@@ -778,7 +847,7 @@ local function Pandoc(doc)
   -- has every one of its blocks centred on a page of its own, which turns a
   -- defective source into an unreadable 1000-page PDF.
   if not first_chapter then
-    return doc
+    return set_cover_flag(doc)
   end
 
   local blocks = pandoc.List()
@@ -800,7 +869,7 @@ local function Pandoc(doc)
   end
   doc.blocks = blocks
 
-  return doc
+  return set_cover_flag(doc)
 end
 
 --- Measure every image and mark the decorations.
@@ -817,10 +886,13 @@ end
 -- zip and the build would fail. An explicit width in the optional argument
 -- overrides the template's default; keepaspectratio survives either way.
 local function Image(img)
+  -- Measured before the early return, not after: image_pixels also repairs a
+  -- JFIF density too broken for LaTeX to measure, and a picture the publisher
+  -- sized needs that repair just as much as one it left alone.
+  local w, h = image_pixels(img.src)
   if img.attributes.width or img.attributes.height then
     return nil -- the publisher gave it a size; respect it
   end
-  local w, h = image_pixels(img.src)
   if not w or math.max(w, h) > settings['small-image-max'] then
     return nil
   end
@@ -914,6 +986,67 @@ local function Plain(block)
     return on_its_own_page(img)
   end
   return text_block(block)
+end
+
+--- Drop a language tag that cannot earn its keep.
+--
+-- The LaTeX writer turns a span's lang attribute into \foreignlanguage, and
+-- the template declares every language it sees, because polyglossia treats an
+-- undeclared one as a critical error. Declaring it is not always enough: a
+-- gloss whose script the main font does not cover demands a font of its own
+-- (\arabicfont, \hebrewfont, …) and fails the build without one, and EB
+-- Garamond covers no script but Latin.
+--
+-- The tags in these files are as unreliable as the dc:language the pipeline
+-- already refuses to trust. One novel in the corpus carries exactly one tag,
+-- `ar-SA`, on a span whose entire content is an ellipsis between two spaces —
+-- no Arabic anywhere in the book — and it was enough to stop the build.
+--
+-- So keep the tag only where it can do the work it exists for: hyphenation
+-- and spacing of real words in a script this book can set. Case is the test —
+-- a cased script (Latin, Greek, Cyrillic) has letters that fold, punctuation
+-- and digits do not, and a caseless script (Arabic, Hebrew, CJK) is one EB
+-- Garamond has no glyphs for in any case. A French phrase inside an English
+-- novel keeps its tag and its hyphenation; an ellipsis labelled Arabic loses
+-- one it never used.
+local function Span(span)
+  if span.attributes.lang == nil then
+    return nil
+  end
+  local text = visible(pandoc.utils.stringify(span))
+  if pandoc.text.lower(text) ~= pandoc.text.upper(text) then
+    return nil
+  end
+  span.attributes.lang = nil
+  return span
+end
+
+--- Strip the EPUB's navigation plumbing out of a heading.
+--
+-- These files hang the print edition's page anchors on the chapter title
+-- itself — an empty Span carrying `...praise.xhtml#page_i` — and wrap the
+-- whole title in a Link back to the nav document. Pandoc turns the Span's
+-- identifier into a \hypertarget, and \chapter copies its optional argument
+-- into the .toc and the PDF bookmark, where a \hypertarget expands
+-- \Hy@wrapper@babel in a context that has no \set@display@protect: the build
+-- dies on "Undefined control sequence" at the very first chapter. \hyperlink
+-- survives the same position, but it points into a nav document this PDF does
+-- not contain, so the Link goes too rather than becoming a dead target.
+--
+-- Only the plumbing is removed. A Span that styles the title keeps its
+-- classes, an inline image in a header is left alone, and the heading text —
+-- which is what the PDF outline is built from — is untouched.
+local function Header(head)
+  head.content = head.content:walk({
+    Link = function(link)
+      return link.content
+    end,
+    Span = function(span)
+      span.identifier = ''
+      return span
+    end,
+  })
+  return head
 end
 
 --- Stop caption-less images from becoming floats.
@@ -1083,6 +1216,8 @@ return {
   {
     Inlines = Inlines,
     Image = Image,
+    Span = Span,
+    Header = Header,
     Para = Para,
     Plain = Plain,
     Figure = Figure,
