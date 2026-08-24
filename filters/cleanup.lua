@@ -547,6 +547,27 @@ local function has_image(block)
   return found
 end
 
+--- Page images the Para/Plain handlers have already turned into \pageimage.
+--
+-- By the time the front-matter pass runs, a picture given its own page is no
+-- longer an Image element but a raw block, and it can be nested: one publisher
+-- wraps its title-page artwork in a <div>, so the finished \pageimage arrives
+-- inside a Div rather than beside one. Anything that asks "is there a picture
+-- here?" has to ask this too, or that Div reads as an empty page and is thrown
+-- away — which is exactly how the title page of La mauvaise conscience
+-- disappeared, silently, with nothing dropped to warn about.
+local function placed_page_images(block)
+  local found = pandoc.List()
+  block:walk({
+    RawBlock = function(raw)
+      if raw.text:match('^\\pageimage') then
+        found:insert(raw)
+      end
+    end,
+  })
+  return found
+end
+
 --- A block that occupies vertical space and shows nothing.
 -- Word-derived EPUBs pad their front matter with rows of <p>&nbsp;</p> — 33 of
 -- them around five useful lines on one title page — and Calibre leaves a
@@ -556,7 +577,7 @@ local function is_blank_block(block)
   if block.t ~= 'Para' and block.t ~= 'Plain' and block.t ~= 'Div' then
     return false
   end
-  if has_image(block) then
+  if has_image(block) or #placed_page_images(block) > 0 then
     return false
   end
   return visible(pandoc.utils.stringify(block)) == ''
@@ -758,8 +779,20 @@ local function lay_out_front_page(group)
   local placed = pandoc.List()
   local rest = pandoc.List()
   for _, block in ipairs(blocks) do
-    if block.t == 'RawBlock' and block.text:match('^\\pageimage') then
-      placed:insert(block)
+    local page_images = placed_page_images(block)
+    -- Lifted out of whatever wrapped them, but only when the wrapper holds
+    -- nothing else: a Div carrying both the artwork and a line of prose still
+    -- has to go through the layout below, or the prose is lost with it.
+    local wrapper = block:walk({
+      RawBlock = function(raw)
+        if raw.text:match('^\\pageimage') then
+          return {}
+        end
+      end,
+    })
+    if #page_images > 0 and not has_image(wrapper)
+       and visible(pandoc.utils.stringify(wrapper)) == '' then
+      placed:extend(page_images)
     else
       rest:insert(block)
     end
@@ -1021,6 +1054,25 @@ local function Span(span)
   return span
 end
 
+--- Drop the link an EPUB footnote uses to get back to the text.
+--
+-- Every note in these files ends with a link home, its whole text a ↩ (U+21A9)
+-- and a variation selector. A printed note sits on the page that called it, so
+-- the link has nowhere to go, and EB Garamond has no glyph for the arrow:
+-- Jankélévitch's 276 notes each rendered a dead \hyperlink around nothing and
+-- logged a "Missing character" warning for it. That is 276 lines of noise in a
+-- log whose warnings are supposed to mean content was dropped.
+--
+-- Matched on the EPUB 3 role first, since that is the standard marker, with
+-- the class as the fallback for files that only carry the styling hook.
+local function Link(link)
+  if link.attributes['role'] == 'doc-backlink'
+     or link.classes:includes('footnote-back') then
+    return {}
+  end
+  return nil
+end
+
 --- Strip the EPUB's navigation plumbing out of a heading.
 --
 -- These files hang the print edition's page anchors on the chapter title
@@ -1047,6 +1099,94 @@ local function Header(head)
     end,
   })
   return head
+end
+
+-- Divs whose class is the only record that a chapter or a section starts here,
+-- and the heading level each one stands for. Ordered, so a Div carrying two of
+-- them resolves the same way every run.
+local SECTIONING_DIVS = {
+  { class = 'div-chap', level = 1 },
+  { class = 'div-niv1', level = 2 },
+  { class = 'div-niv2', level = 3 },
+}
+
+--- How many leading Paras of a sectioning Div are its title?
+--
+-- A chapter opens with a number and a title, or with a title alone, and the
+-- body always starts at the first nested Div — so the title is the run of
+-- Paras before it, and never more than those two. A section's title is its
+-- first paragraph, and the paragraph after it is already prose.
+local function heading_length(div, level)
+  if level > 1 then
+    local first = div.content[1]
+    return (first and first.t == 'Para') and 1 or 0
+  end
+  local n = 0
+  for _, block in ipairs(div.content) do
+    if block.t ~= 'Para' or n == 2 then
+      break
+    end
+    n = n + 1
+  end
+  return n
+end
+
+--- Give a heading-less book its headings back.
+--
+-- Flammarion's "Champs essais" EPUBs carry no heading element anywhere: every
+-- chapter and section title is a styled <p> inside a semantic <div>, and
+-- pandoc keeps a div's class but drops a paragraph's, so nothing left in the
+-- AST says "this is a title". The div class is the whole of the evidence:
+--
+--   <div class="div-chap">  <p class="chap-n">Chapitre I</p>
+--                           <p class="chap-tit">La demi-conscience</p>
+--                           <div class="div-exer">…   ← body starts here
+--   <div class="div-niv1">  <p class="niv1-int">1. – La conscience du plaisir</p>
+--                           <p class="niv1-txt-j">…   ← body starts here
+--
+-- Checked against every chapter of both books in the corpus, nine of nine.
+--
+-- This is not the chapterless EPUB the pipeline deliberately refuses to guess
+-- at. That one has no structure to find; this one has all of it, in a place
+-- pandoc's reader does not look. Leaving it cost these books more than their
+-- PDF outline: with no Header in the document, Pandoc() finds no first chapter
+-- and returns before the front-matter pass, so the cover was never given its
+-- page — it stayed inline and, undeduplicated, was drawn twice.
+--
+-- The number and the title are joined with an em dash, which is how the one
+-- book in the corpus that does mark its chapters up properly writes the same
+-- heading: "Chapitre Premier — De l'empirie à la métempirie".
+local function Div(div)
+  local level
+  for _, rule in ipairs(SECTIONING_DIVS) do
+    if div.classes:includes(rule.class) then
+      level = rule.level
+      break
+    end
+  end
+  if not level then
+    return nil
+  end
+
+  local length = heading_length(div, level)
+  if length == 0 then
+    return nil
+  end
+
+  local title = pandoc.List()
+  for i = 1, length do
+    if #title > 0 then
+      title:extend({ pandoc.Space(), pandoc.Str('—'), pandoc.Space() })
+    end
+    title:extend(div.content[i].content)
+  end
+
+  local out = pandoc.List({ pandoc.Header(level, title) })
+  for i = length + 1, #div.content do
+    out:insert(div.content[i])
+  end
+  div.content = out
+  return div
 end
 
 --- Stop caption-less images from becoming floats.
@@ -1217,7 +1357,9 @@ return {
     Inlines = Inlines,
     Image = Image,
     Span = Span,
+    Link = Link,
     Header = Header,
+    Div = Div,
     Para = Para,
     Plain = Plain,
     Figure = Figure,
