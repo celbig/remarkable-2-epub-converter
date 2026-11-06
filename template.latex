@@ -240,6 +240,14 @@ $endfor$
 \def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
 \def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
 \makeatother
+% Pandoc >= 3.7 wraps every inline image as \pandocbounded{\includegraphics…}
+% and the stock template defines the macro; this template does not use the
+% stock graphics block, so without a definition the build dies on "Undefined
+% control sequence".  The wrapper only exists to cap an image to the text
+% block, which the \setkeys{Gin} default just below already does (and scales
+% up as well), so an identity definition is enough.  \providecommand keeps it
+% harmless on older pandoc, which never emits the macro.
+\providecommand{\pandocbounded}[1]{#1}
 % Fit every image to the text block, scaling UP as well as down.
 %
 % The obvious \maxwidth/\maxheight (pandoc's default) only ever shrinks, and
