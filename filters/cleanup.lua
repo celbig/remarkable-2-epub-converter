@@ -1,7 +1,7 @@
 --[[
 filters/cleanup.lua — repair EPUB source artifacts before the LaTeX writer.
 
-Four jobs, all of them repairs of the source rather than layout decisions (the
+Six jobs, all of them repairs of the source rather than layout decisions (the
 layout itself lives in template.latex, which this filter only calls into):
 
   1. Line wraps.  These EPUBs wrap their XHTML mid-sentence and pandoc turns
@@ -20,6 +20,16 @@ layout itself lives in template.latex, which this filter only calls into):
   4. Image size.  Every image is measured and the decorations — table glyphs,
      scanner marks, fleurons — are given a real size, so the template's
      fit-to-the-text-block rule applies only to artwork that wants it.
+
+  5. Heading level.  A book whose chapters are <h2> and nothing else is
+     shifted up, so scrbook gives them a \chapter and its page break rather
+     than a \section in the middle of the text.
+
+  6. Print contents.  A "Sommaire" listing the paper edition's page numbers is
+     dropped: the numbers are wrong here and hyperref's outline replaces it.
+     The same goes for an in-book "Contents" page, whether it is the first
+     heading, a heading wrapped in a Div (Vellum), or a styled paragraph
+     opening a front-matter page.
 
 Scope note for (1): only SoftBreak is touched, never Space. Measured on
 test.epub, SoftBreak precedes . 295x  , 172x  ’ 4x  ) 3x  … 2x, whereas a real
@@ -64,6 +74,11 @@ local settings = {
   -- Drop the publisher's legal and commercial pages, and the marks left by
   -- whoever digitised the book. -M frontmatter-trim=false keeps everything.
   ['frontmatter-trim'] = true,
+
+  -- Drop the print edition's table of contents when the book opens on one.
+  -- It lists paper page numbers this PDF does not have, and the outline
+  -- hyperref builds from the headings replaces it. -M toc-trim=false keeps it.
+  ['toc-trim'] = true,
 
   -- A front-matter unit estimated at more than this many lines is too tall to
   -- centre on one page. ~27 lines fit at the default 16 pt.
@@ -125,6 +140,8 @@ local TIGHT_ALWAYS = {
 --              the publisher's rather than the author's. Language-neutral ones
 --              live in BOILERPLATE_MARKERS, further down with the code using
 --              them; these are the ones only that language's editions carry.
+-- `toc`        what this language calls a table of contents, matched against a
+--              whole heading, so the print edition's can be recognised.
 --
 -- Adding a language means adding an entry here and a case in convert.sh's -l;
 -- anything not listed falls back to DEFAULT_RULES, whose punctuation rules are
@@ -158,6 +175,8 @@ local LANGUAGES = {
       'propriété intellectuelle',
       'loi n° 57%-298',
     },
+
+    toc = { '^sommaire$', '^table des mati[èe]res$' },
   },
 
   en = {
@@ -180,6 +199,8 @@ local LANGUAGES = {
       'catalogu?ing%-in%-publication',
       'printed in the',
     },
+
+    toc = { '^contents$', '^table of contents$' },
   },
 }
 
@@ -189,6 +210,7 @@ local DEFAULT_RULES = {
   tight = {},
   standalone = {},
   boilerplate = {},
+  toc = {},
 }
 for char in pairs(TIGHT_ALWAYS) do
   DEFAULT_RULES.tight[char] = true
@@ -514,12 +536,56 @@ local BLANKS = {
   '\226\128\175', -- U+202F narrow no-break space
 }
 
+-- The named blanks go first, whole, and only then the ASCII whitespace.
+-- Lua's %s is the C library's isspace(), which is locale-dependent: on macOS
+-- it matches byte 0xA0 — the *trail* byte of U+00A0. Stripping %s first
+-- therefore ate half of every no-break space and left the orphan lead byte
+-- 0xC2 behind, which reads as visible text. Every <p>&nbsp;</p> spacer in a
+-- Word-derived EPUB survived the front-matter pass that way, padding the page
+-- it was on until it spilled onto a second, empty one.
 local function visible(str)
-  local out = (str:gsub('%s+', ''))
+  local out = str
   for _, blank in ipairs(BLANKS) do
     out = (out:gsub(blank, ''))
   end
-  return out
+  return (out:gsub('%s+', ''))
+end
+
+--- A heading's text, normalised enough to match a name against.
+local function heading_text(block)
+  local text = pandoc.utils.stringify(block)
+  for _, blank in ipairs(BLANKS) do
+    text = (text:gsub(blank, ' '))
+  end
+  text = pandoc.text.lower(text)
+  return (text:gsub('%s+', ' '):gsub('^ ', ''):gsub(' $', ''))
+end
+
+--- Is this the title of a table of contents, in the book's language?
+local function is_toc_title(block)
+  local title = heading_text(block)
+  for _, pattern in ipairs(rules.toc) do
+    if title:find(pattern) then
+      return true
+    end
+  end
+  return false
+end
+
+--- The first Header in a block, at any depth, or nil.
+-- A Header is its own answer; a Div is searched in document order.
+local function first_header(block)
+  if block.t == 'Header' then
+    return block
+  end
+  local found
+  block:walk({
+    traverse = 'topdown',
+    Header = function(head)
+      found = found or head
+    end,
+  })
+  return found
 end
 
 --- Is this block one of pandoc's EPUB spine-item anchors?
@@ -558,6 +624,18 @@ end
 -- disappeared, silently, with nothing dropped to warn about.
 local function placed_page_images(block)
   local found = pandoc.List()
+  -- walk() visits a block's children, never the block itself, so a \pageimage
+  -- standing on its own in the group is invisible to the loop below. That is
+  -- not an edge case: it is where every cover lands. Pandoc synthesises the
+  -- cover from the OPF metadata as a bare top-level Para holding one Image,
+  -- and the Para handler turns it into exactly such a RawBlock. Missed here it
+  -- fell through to `rest`, where stringify() of a RawBlock is the empty
+  -- string, so the group read as a page with nothing on it and was dropped —
+  -- silently, since nothing was recognised as having been thrown away.
+  if block.t == 'RawBlock' and block.text:match('^\\pageimage') then
+    found:insert(block)
+    return found
+  end
   block:walk({
     RawBlock = function(raw)
       if raw.text:match('^\\pageimage') then
@@ -705,6 +783,29 @@ local function is_publisher_boilerplate(text, blocks)
   return false
 end
 
+--- Does this front-matter unit open on a table-of-contents title?
+--
+-- The print contents again, from a book that sets "Contents" as a styled
+-- paragraph rather than a heading. A paragraph opens no chapter, so the page
+-- never reaches drop_print_toc and is laid out here as front matter instead:
+-- a centred list of chapter names leading nowhere. Only the unit's first line
+-- counts, so a dedication that mentions a table of contents is safe.
+local function opens_on_toc_title(blocks)
+  local first
+  local function leaf(block)
+    if not first and visible(pandoc.utils.stringify(block)) ~= '' then
+      first = block
+    end
+  end
+  pandoc.Blocks(blocks):walk({
+    traverse = 'topdown',
+    Para = leaf,
+    Plain = leaf,
+    LineBlock = leaf,
+  })
+  return first ~= nil and is_toc_title(first)
+end
+
 --- Roughly how many lines will this front-matter unit take?
 --
 -- Estimated rather than measured, because measuring means boxing the material
@@ -831,6 +932,11 @@ local function lay_out_front_page(group)
     emitted_page_images[img.src] = true
   end
 
+  if settings['toc-trim'] and opens_on_toc_title(rest) then
+    warn('print table of contents dropped', prose)
+    return out
+  end
+
   if settings['frontmatter-trim'] and is_publisher_boilerplate(prose, rest) then
     warn('front matter dropped', prose)
     return out
@@ -866,7 +972,205 @@ local function set_cover_flag(doc)
   return doc
 end
 
+--- Is this block a picture and nothing else?
+local function is_picture_only(block)
+  if not has_image(block) and #placed_page_images(block) == 0 then
+    return false
+  end
+  local stripped = block:walk({
+    Image = function()
+      return {}
+    end,
+  })
+  return visible(pandoc.utils.stringify(stripped)) == ''
+end
+
+--- Does this block start a page of its own, or end one?
+local function breaks_the_page(block)
+  return block == nil
+      or block.t == 'Header'
+      or block.t == 'RawBlock'
+      or is_picture_only(block)
+end
+
+--- Drop the spacer paragraphs the front-matter pass cannot reach.
+--
+-- An empty paragraph between two paragraphs of prose is a scene break and has
+-- to stay. Everywhere else it is the Word artefact these EPUBs are full of,
+-- and next to something that already occupies a page of its own it costs a
+-- page: the two maps in La Grâce de Kushiel are separated by two <p>&nbsp;</p>
+-- and a file anchor, and each map fills the text block, so the spacers landed
+-- alone on a page between them and read as a blank one. The same pair sat
+-- between the last front-matter page and the first chapter.
+--
+-- So a blank block goes only when the nearest thing that shows something, on
+-- one side or the other, is a heading, a picture standing alone, or the end of
+-- the list. Pandoc's own file anchors are left where they are: they carry the
+-- \label an internal link points at, and, holding no printable material, they
+-- start no paragraph and take no room.
+local function drop_stray_blanks(blocks)
+  local out = pandoc.List()
+  for i, block in ipairs(blocks) do
+    if is_blank_block(block) and not is_file_anchor(block) then
+      local before, after
+      for j = i - 1, 1, -1 do
+        if not is_blank_block(blocks[j]) then
+          before = blocks[j]
+          break
+        end
+      end
+      for j = i + 1, #blocks do
+        if not is_blank_block(blocks[j]) then
+          after = blocks[j]
+          break
+        end
+      end
+      if not (breaks_the_page(before) or breaks_the_page(after)) then
+        out:insert(block)
+      end
+    else
+      out:insert(block)
+    end
+  end
+  return out
+end
+
+--- Make the book's own chapter level the one scrbook turns into a \chapter.
+--
+-- Pandoc maps Header 1 onto \chapter and Header 2 onto \section, and under
+-- scrbook a \section does not start a page. Two of the three Carey volumes
+-- mark every chapter with <h2> and nothing else: seventy-seven chapter titles
+-- came out set in bold in the middle of the running text, with no page break
+-- anywhere and the whole book hanging one level too deep in the PDF outline.
+--
+-- The shallowest heading in a novel is its chapter, whatever number the
+-- publisher's converter happened to write, so shifting the document up until
+-- that level is 1 restores both the page breaks and the outline. A book that
+-- already has a level-1 heading — including one the Div handler above just
+-- built — is left exactly as it is.
+local function promote_headings(blocks)
+  local top
+  blocks = pandoc.Blocks(blocks)
+  blocks:walk({
+    Header = function(head)
+      if not top or head.level < top then
+        top = head.level
+      end
+    end,
+  })
+  if not top or top <= 1 then
+    return blocks
+  end
+  local shift = top - 1
+  return blocks:walk({
+    Header = function(head)
+      head.level = head.level - shift
+      return head
+    end,
+  })
+end
+
+--- Cut blocks[first..last] out of the document, saying so.
+local function drop_toc_section(blocks, first, last, title)
+  warn('print table of contents dropped',
+       ('%s, %d blocks'):format(title, last - first + 1))
+
+  local out = pandoc.List()
+  for i = 1, first - 1 do
+    out:insert(blocks[i])
+  end
+  for i = last + 1, #blocks do
+    out:insert(blocks[i])
+  end
+  return out
+end
+
+--- Drop the print edition's table of contents.
+--
+-- "Sommaire", six pages of it, listing the paper edition's page numbers: p 29,
+-- p 40, p 53. None of those numbers means anything in a PDF of a different
+-- page size, and hyperref already builds a real outline out of the headings,
+-- which is what the tablet navigates by. So it is six pages of dead weight
+-- between the reader and chapter one.
+--
+-- Only the book's *first* heading is considered. A table of contents belongs
+-- at the front by definition, and refusing to look further keeps a chapter
+-- that happens to be called "Contents" safe. The section runs from that
+-- heading to the next one at the same level or shallower.
+--
+-- Vellum, which most English indie novels come out of, wraps every heading in
+-- a Div of its own, "Contents" included. So the first heading at any depth is
+-- tried before the first top-level one, and when it sits in a Div the section
+-- ends at the next block holding a heading at its level or shallower. A Div
+-- that holds such a heading besides the contents' own is the book, not the
+-- contents, and is left alone.
+local function drop_print_toc(blocks)
+  local function holds_heading(block, level)
+    local count = 0
+    block:walk({
+      Header = function(head)
+        if head.level <= level then
+          count = count + 1
+        end
+      end,
+    })
+    return count
+  end
+
+  local first, head
+  for i, block in ipairs(blocks) do
+    head = first_header(block)
+    if head then
+      first = i
+      break
+    end
+  end
+  if first and blocks[first].t ~= 'Header' and is_toc_title(head)
+     and holds_heading(blocks[first], head.level) == 1 then
+    local last = #blocks
+    for i = first + 1, #blocks do
+      local next_head = first_header(blocks[i])
+      if next_head and (next_head.level <= head.level
+                        or holds_heading(blocks[i], head.level) > 0) then
+        last = i - 1
+        break
+      end
+    end
+    return drop_toc_section(blocks, first, last, heading_text(head))
+  end
+
+  first = nil
+  for i, block in ipairs(blocks) do
+    if block.t == 'Header' then
+      first = i
+      break
+    end
+  end
+  if not first or not is_toc_title(blocks[first]) then
+    return blocks
+  end
+
+  local level = blocks[first].level
+  local last = #blocks
+  for i = first + 1, #blocks do
+    if blocks[i].t == 'Header' and blocks[i].level <= level then
+      last = i - 1
+      break
+    end
+  end
+
+  return drop_toc_section(blocks, first, last, heading_text(blocks[first]))
+end
+
 local function Pandoc(doc)
+  -- Both run before the front matter is grouped: the pass below stops at the
+  -- first chapter, and until the headings are at their real level, and the
+  -- print contents is out of the way, that is not the block it looks like.
+  doc.blocks = promote_headings(doc.blocks)
+  if settings['toc-trim'] then
+    doc.blocks = drop_print_toc(doc.blocks)
+  end
+
   local first_chapter = nil
   for i, block in ipairs(doc.blocks) do
     if opens_a_chapter(block) then
@@ -900,7 +1204,11 @@ local function Pandoc(doc)
   for i = first_chapter, #doc.blocks do
     blocks:insert(doc.blocks[i])
   end
-  doc.blocks = blocks
+  -- pandoc.Blocks(), because `blocks` is a plain pandoc.List here and only a
+  -- Blocks knows how to walk itself. The nested pass reaches the spacers a
+  -- publisher left inside a Div; the outer one, those at the top level.
+  doc.blocks = drop_stray_blanks(
+    pandoc.Blocks(blocks):walk({ Blocks = drop_stray_blanks }))
 
   return set_cover_flag(doc)
 end
@@ -1089,6 +1397,15 @@ end
 -- classes, an inline image in a header is left alone, and the heading text —
 -- which is what the PDF outline is built from — is untouched.
 local function Header(head)
+  -- A heading with nothing in it still opens a chapter, and a chapter opens a
+  -- page: L'Héritier de Kushiel carries three empty anchor spans marked up as
+  -- an <h1>, and they came out as a \chapter with a blank title, a blank page
+  -- and a blank line in the PDF outline. Only genuinely empty ones go — a
+  -- heading whose whole content is a chapter banner is a real heading.
+  if visible(pandoc.utils.stringify(head)) == '' and not has_image(head) then
+    return {}
+  end
+
   head.content = head.content:walk({
     Link = function(link)
       return link.content
